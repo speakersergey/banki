@@ -73,6 +73,15 @@ h1 { font: 700 26px/1.1 var(--display); margin: 0; letter-spacing: -0.01em; text
 .form-msg { margin: 0; padding: 10px 12px; border-radius: 10px; background: var(--sunk); font-size: 14px }
 .form-msg.err { background: var(--accent-soft); color: var(--danger) }
 .btn.wide { width: 100% }
+.fact { margin: 0 0 14px; padding: 12px 14px 12px 16px; border-radius: var(--r); background: var(--accent-soft) }
+.fact-head { display: flex; justify-content: space-between; align-items: center; gap: 8px }
+.fact-label { font: 500 11px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--accent) }
+.fact-text { margin: 6px 0 8px; font-size: 15px; line-height: 1.45; max-width: 70ch; text-wrap: pretty }
+.fact-src { font-size: 12px; color: var(--muted); text-decoration: none; overflow-wrap: anywhere }
+.fact-src:hover { text-decoration: underline }
+.fact-x { border: 0; background: none; font-size: 22px; line-height: 1; color: var(--muted); padding: 2px 6px; margin: -6px -8px 0 0; cursor: pointer }
+.fact.collapsed { padding: 0; background: none }
+.fact-open { display: inline-flex; gap: 10px; align-items: center; border: 1px dashed var(--line); background: none; border-radius: 999px; padding: 6px 12px; font-size: 13px; color: var(--muted); cursor: pointer }
 .auth-links { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-top: 14px }
 
 .list { display: grid; grid-template-columns: 1fr; gap: 8px; margin: 0; padding: 0; list-style: none }

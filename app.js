@@ -851,6 +851,35 @@ document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible" && Date.now() - lastWake > 30000) { lastWake = Date.now(); scheduleSync(); }
 });
 
+/* ---------- fact of the day ---------- */
+const FACT_HIDDEN = "cans-fact-hidden-day";
+function renderFact() {
+  const el = $("fact");
+  if (typeof FactOfDay === "undefined") { el.hidden = true; return; }
+  const f = FactOfDay.today(), key = FactOfDay.key();
+  let hiddenDay = "";
+  try { hiddenDay = localStorage.getItem(FACT_HIDDEN) || ""; } catch (e) { /* storage blocked */ }
+  const collapsed = hiddenDay === key; // hidden only for today; a new fact shows up tomorrow
+  const date = new Date().toLocaleDateString("ru-RU", { day: "numeric", month: "long" });
+  let host = "";
+  try { host = new URL(f.u).hostname.replace(/^www\./, ""); } catch (e) { host = "источник"; }
+  el.classList.toggle("collapsed", collapsed);
+  el.innerHTML = collapsed
+    ? `<button class="fact-open" id="factOpen" type="button"><span class="fact-label">Факт дня</span><span>Показать</span></button>`
+    : `<div class="fact-head"><span class="fact-label">Факт дня · ${esc(date)}</span><button class="fact-x" id="factHide" type="button" aria-label="Свернуть факт дня" title="Свернуть до завтра">×</button></div>
+       <p class="fact-text">${esc(f.t)}</p>
+       <a class="fact-src" href="${esc(f.u)}" target="_blank" rel="noopener">Источник: ${esc(host)} ↗</a>`;
+  el.hidden = false;
+  const set = (v) => { try { v ? localStorage.setItem(FACT_HIDDEN, v) : localStorage.removeItem(FACT_HIDDEN); } catch (e) { /* storage blocked */ } renderFact(); };
+  if ($("factHide")) $("factHide").onclick = () => set(key);
+  if ($("factOpen")) $("factOpen").onclick = () => set("");
+}
+// switch to the new fact at midnight, and when the app is reopened on another day
+let factDay = "";
+function refreshFactIfNewDay() { if (typeof FactOfDay !== "undefined" && FactOfDay.key() !== factDay) { factDay = FactOfDay.key(); renderFact(); } }
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") refreshFactIfNewDay(); });
+setInterval(refreshFactIfNewDay, 60000);
+
 /* ---------- start ---------- */
 (async () => {
   try {
@@ -862,6 +891,7 @@ document.addEventListener("visibilitychange", () => {
     run.disabled = true;
   }
   render();
+  refreshFactIfNewDay();
   try {
     const link = await Cloud.fromLink();
     if (link && link.error) openAuth("signin", Cloud.explain({ code: link.error, message: link.message }), true);

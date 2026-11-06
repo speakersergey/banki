@@ -1,7 +1,7 @@
 /* Offline support: the app shell, fonts and the Excel module are cached after the first visit. */
-const VERSION = "cans-v4";
+const VERSION = "cans-v5";
 const SHELL = [
-  "./", "./index.html", "./style.css", "./cloud.js", "./app.js", "./manifest.webmanifest",
+  "./", "./index.html", "./style.css", "./facts.js", "./cloud.js", "./app.js", "./manifest.webmanifest",
   "./icon-192.png", "./icon-512.png", "./apple-touch-icon.png",
 ];
 
