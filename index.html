@@ -47,7 +47,7 @@
     <select id="fSort" aria-label="Сортировка"><option value="num-desc">Сначала новые</option><option value="num-asc">Сначала старые</option><option value="country">По стране</option><option value="date-desc">По дате на банке</option></select>
     <button class="ghost accent" id="fReset" type="button" hidden>Сбросить</button>
   </div>
-  <p class="status" id="status" hidden></p>
+  <div class="status" id="status" role="status" hidden></div>
 
   <ul class="list" id="list"></ul>
 
@@ -68,12 +68,15 @@
 
 <section class="sheet" id="wizard" hidden role="dialog" aria-modal="true" aria-label="Новая банка"><div class="panel" id="wizardBody"></div></section>
 <section class="sheet" id="detail" hidden role="dialog" aria-modal="true" aria-label="Банка"><div class="panel" id="detailBody"></div></section>
+<section class="sheet" id="auth" hidden role="dialog" aria-modal="true" aria-label="Вход"><div class="panel small" id="authBody"></div></section>
+<section class="sheet" id="ask" hidden role="dialog" aria-modal="true" aria-label="Подтверждение"><div class="panel small" id="askBody"></div></section>
 <section class="sheet" id="menu" hidden role="dialog" aria-modal="true" aria-label="Меню"><div class="panel small" id="menuBody"></div></section>
 
 <input type="file" id="importXlsx" accept=".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
 <input type="file" id="importBackup" accept=".json,application/json" hidden>
 <div class="toast" id="toast" role="status" hidden></div>
 
+<script src="cloud.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

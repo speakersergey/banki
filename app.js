@@ -1,5 +1,7 @@
 "use strict";
-/* Коллекция банок — данные хранятся в браузере (IndexedDB) на устройстве пользователя. */
+/* Коллекция банок.
+   Без входа коллекция хранится в браузере (IndexedDB). После входа — в облаке (cloud.js),
+   а в браузере остаётся копия для быстрого запуска и работы без интернета. */
 
 // SheetJS 0.18.5 (Apache-2.0), loaded only for Excel import/export: local copy first, then public CDNs
 const XLSX_URLS = [
@@ -74,8 +76,37 @@ const dbPut = (c) => run("readwrite", (s) => s.put(c));
 const dbPutMany = (list) => run("readwrite", (s) => { list.forEach((c) => s.put(c)); return null; });
 const dbDelete = (id) => run("readwrite", (s) => s.delete(id));
 
-let cans = [];
+let records = []; // everything on this device: the local collection and cached cloud collections
+let cans = [];    // the collection on screen
 let lastShown = [], lastFiltering = false; // what the list currently shows, used by the Excel export
+let storageWarning = "";
+
+const owner = () => (Cloud.user() ? Cloud.user().id : "local");
+const isCloud = () => !!Cloud.user();
+const ownerOf = (r) => r.owner || "local";
+function recompute() { const o = owner(); cans = records.filter((r) => ownerOf(r) === o && !r._deleted); }
+function upsertRecords(list) {
+  const byId = new Map(list.map((r) => [r.id, r]));
+  records = records.filter((r) => !byId.has(r.id)).concat(list);
+}
+// every change goes through here: saved on the device, then sent to the cloud when signed in
+async function saveCans(list) {
+  const o = owner(), cloud = isCloud();
+  list.forEach((c) => { c.owner = o; c._rev = (c._rev || 0) + 1; if (cloud) c._dirty = true; });
+  await dbPutMany(list);
+  upsertRecords(list);
+  render();
+  if (cloud) scheduleSync();
+}
+async function removeCan(c) {
+  if (isCloud()) {
+    const d = { ...c, _deleted: true, _dirty: true, _rev: (c._rev || 0) + 1 };
+    await dbPut(d); upsertRecords([d]); scheduleSync();
+  } else {
+    await dbDelete(c.id); records = records.filter((r) => r.id !== c.id);
+  }
+  render();
+}
 
 /* object URLs for stored photos */
 const urlCache = new Map();
@@ -107,6 +138,8 @@ const SORTS = {
   "date-desc": (a, b) => cap(b.date).localeCompare(cap(a.date)) || (b.num || 0) - (a.num || 0),
 };
 function render() {
+  recompute();
+  renderStatus();
   fillSelect("fCountry", "country", "Все страны");
   fillSelect("fFlavor", "flavor", "Все вкусы");
   const q = norm($("search").value);
@@ -155,15 +188,17 @@ let lastFocus = null;
 function openSheet(id) { lastFocus = document.activeElement; $(id).hidden = false; $(id).scrollTop = 0; document.body.style.overflow = "hidden"; }
 function closeSheet(id) {
   $(id).hidden = true;
-  if ($("wizard").hidden && $("detail").hidden && $("menu").hidden) document.body.style.overflow = "";
+  if (["wizard", "detail", "menu", "auth", "ask"].every((x) => $(x).hidden)) document.body.style.overflow = "";
   if (lastFocus && document.contains(lastFocus)) lastFocus.focus({ preventScroll: true });
 }
-["wizard", "detail", "menu"].forEach((id) => $(id).addEventListener("click", (e) => {
+["wizard", "detail", "menu", "auth", "ask"].forEach((id) => $(id).addEventListener("click", (e) => {
   if (e.target === $(id) && matchMedia("(min-width: 720px)").matches) id === "wizard" ? closeWizard() : closeSheet(id);
 }));
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;
-  if (!$("menu").hidden) closeSheet("menu");
+  if (!$("ask").hidden) closeSheet("ask");
+  else if (!$("auth").hidden) closeSheet("auth");
+  else if (!$("menu").hidden) closeSheet("menu");
   else if (!$("detail").hidden) closeSheet("detail");
   else if (W) closeWizard();
 });
@@ -182,11 +217,18 @@ function openDetail(id) {
   $("detailBody").innerHTML = `
     <div class="bar"><button class="ghost" id="dClose" type="button">← К списку</button>
       <span><button class="ghost" id="dEdit" type="button">Изменить</button><button class="ghost danger" id="dDel" type="button">Удалить</button></span></div>
-    ${src ? `<img class="photo-big" src="${src}" alt="Фото банки">` : `<label class="photo-slot" id="dAddPhoto">Фото нет.<br>Нажмите «Изменить»,<br>чтобы добавить</label>`}
+    ${src ? `<img class="photo-big" src="${src}" alt="Фото банки">` : (c.photo_path ? `<div class="photo-slot">Фото загружается…</div>` : `<div class="photo-slot">Фото нет.<br>Нажмите «Изменить»,<br>чтобы добавить</div>`)}
     <div class="detail-title">${esc(dispCountry(c.country))} · ${esc(cap(c.flavor))}</div>
     <dl><dt>Номер</dt><dd>${esc(c.num)}</dd>${rows}</dl>
     <div id="dConfirm"></div>`;
   openSheet("detail");
+  if (!c.photo && c.photo_path && isCloud()) {
+    loadFullPhoto(c).then((b) => {
+      const img = $("detailBody").querySelector(".photo-big");
+      if (b && img && !$("detail").hidden) img.src = photoSrc(c);
+      else if (b && !img && !$("detail").hidden) openDetail(c.id);
+    }).catch(() => {});
+  }
   $("dClose").onclick = () => closeSheet("detail");
   $("dEdit").onclick = () => { closeSheet("detail"); openWizard(c); };
   $("dDel").onclick = () => {
@@ -194,7 +236,7 @@ function openDetail(id) {
       <button class="btn primary" id="dYes" type="button">Удалить</button><button class="btn" id="dNo" type="button">Отмена</button></div>`;
     $("dNo").onclick = () => ($("dConfirm").innerHTML = "");
     $("dYes").onclick = async () => {
-      try { await dbDelete(c.id); cans = cans.filter((x) => x.id !== c.id); render(); closeSheet("detail"); toast("Удалено"); }
+      try { await removeCan(c); closeSheet("detail"); toast("Удалено"); }
       catch (e) { toast("Не удалось удалить. Попробуйте ещё раз."); }
     };
   };
@@ -328,14 +370,12 @@ async function finish() {
   const btn = $("wNext"); btn.disabled = true; btn.textContent = "Сохраняю…";
   try {
     const c = { ...W.draft };
-    if (W.newPhoto) { c.photo = W.newPhoto.photo; c.thumb = W.newPhoto.thumb; }
+    if (W.newPhoto) { c.photo = W.newPhoto.photo; c.thumb = W.newPhoto.thumb; c._photoDirty = true; }
     c.updatedAt = new Date().toISOString();
     if (!c.createdAt) c.createdAt = c.updatedAt;
-    await dbPut(c);
-    const i = cans.findIndex((x) => x.id === c.id);
-    if (i >= 0) cans[i] = c; else cans.push(c);
+    await saveCans([c]);
     const editing = W.editing;
-    closeWizard(); render();
+    closeWizard();
     toast(editing ? "Сохранено" : `Банка №${c.num} добавлена`);
   } catch (e) {
     btn.disabled = false; btn.textContent = "Попробовать снова";
@@ -436,15 +476,14 @@ async function importExcel(file) {
       };
       const n = parseInt(get("num"), 10);
       const ex = Number.isFinite(n) ? byNum.get(String(n)) : null;
-      if (ex) { Object.assign(ex, fields, { updatedAt: new Date().toISOString() }); changed.push(ex); updated++; }
+      if (ex) { changed.push({ ...ex, ...fields, updatedAt: new Date().toISOString() }); updated++; }
       else {
         const num = Number.isFinite(n) ? n : ++maxNum; maxNum = Math.max(maxNum, num);
         const c = { id: uid(), num, ...fields, createdAt: new Date().toISOString() };
         cans.push(c); byNum.set(String(num), c); changed.push(c); added++;
       }
     }
-    await dbPutMany(changed);
-    render();
+    await saveCans(changed);
     toast(`Загружено из Excel: добавлено ${added}, обновлено ${updated}. Фото сохранены.`, 4000);
   } catch (e) { toast(e.message || "Не удалось прочитать таблицу.", 4000); }
 }
@@ -456,6 +495,8 @@ async function exportBackup() {
     const list = [];
     for (const c of cans) {
       const o = { ...c };
+      ["owner", "_dirty", "_photoDirty", "_rev", "photo_path", "thumb_path"].forEach((k) => delete o[k]);
+      if (!c.photo && c.photo_path && isCloud()) { try { await loadFullPhoto(c); } catch (e) { /* keep the small copy */ } }
       if (c.photo) o.photo = await blobToDataURL(c.photo);
       if (c.thumb) o.thumb = await blobToDataURL(c.thumb);
       list.push(o);
@@ -468,17 +509,18 @@ async function importBackup(file) {
   try {
     const data = JSON.parse(await file.text());
     if (data.app !== "can-collection" || !Array.isArray(data.cans)) { toast("Это не файл резервной копии коллекции.", 4000); return; }
-    const list = [];
+    const list = [], me = owner();
     for (const o of data.cans) {
       const c = { ...o };
+      ["owner", "_dirty", "_deleted", "_photoDirty", "_rev", "photo_path", "thumb_path"].forEach((k) => delete c[k]);
+      // an id already used by another collection on this device gets a new one
+      if (records.some((r) => r.id === c.id && ownerOf(r) !== me)) c.id = uid();
       if (typeof o.photo === "string") c.photo = await (await fetch(o.photo)).blob();
       if (typeof o.thumb === "string") c.thumb = await (await fetch(o.thumb)).blob();
+      if (c.photo || c.thumb) c._photoDirty = true;
       list.push(c);
     }
-    await dbPutMany(list);
-    const ids = new Set(list.map((c) => c.id));
-    cans = cans.filter((c) => !ids.has(c.id)).concat(list);
-    render();
+    await saveCans(list);
     toast(`Восстановлено банок: ${list.length}`);
   } catch (e) { toast("Не удалось прочитать файл копии.", 4000); }
 }
@@ -499,22 +541,37 @@ function openMenu() {
     : `<div class="menu-item"><b>Установить на телефон</b><span>${isIOS()
         ? "В Safari нажмите «Поделиться», затем «На экран „Домой“»."
         : "В меню браузера выберите «Установить приложение» или «Добавить на главный экран»."}</span></div>`;
+  const u = Cloud.user();
+  const localCount = records.filter((r) => ownerOf(r) === "local" && !r._deleted).length;
+  const account = u
+    ? `<div class="menu-item"><b>Аккаунт</b><span>${esc(u.email)} · коллекция в облаке</span></div>
+       <button class="menu-item" id="mSync" type="button"><b>Синхронизировать сейчас</b><span>Отправить изменения и загрузить новое с других устройств</span></button>
+       ${localCount ? `<button class="menu-item" id="mMigrate" type="button"><b>Перенести банки с устройства (${localCount})</b><span>Банки, добавленные без входа, попадут в облако</span></button>` : ""}`
+    : `<button class="menu-item" id="mLogin" type="button"><b>Войти или создать аккаунт</b><span>Коллекция будет в облаке и на всех ваших устройствах</span></button>`;
   $("menuBody").innerHTML = `
     <div class="bar"><div class="menu-title">Меню</div><button class="ghost" id="mClose" type="button">Закрыть</button></div>
     <div class="menu-list">
+      ${account}
       <button class="menu-item" id="mExport" type="button"><b>Выгрузить всю коллекцию в Excel</b><span>Таблица с теми же колонками, без фото. Кнопка «Excel» вверху учитывает фильтры</span></button>
       <button class="menu-item" id="mImport" type="button"><b>Загрузить из Excel</b><span>Добавит банки из таблицы. Совпадающие номера обновятся, фото останутся</span></button>
       <button class="menu-item" id="mBackup" type="button"><b>Сохранить резервную копию</b><span>Один файл со всеми банками и фото</span></button>
       <button class="menu-item" id="mRestore" type="button"><b>Восстановить из копии</b><span>Например, чтобы перенести коллекцию на другое устройство</span></button>
       ${install}
+      ${u ? `<button class="menu-item" id="mLogout" type="button"><b>Выйти из аккаунта</b><span>Коллекция останется в облаке</span></button>` : ""}
     </div>
-    <p class="menu-note">Коллекция хранится только на этом устройстве, в этом браузере. Время от времени сохраняйте резервную копию.</p>`;
+    <p class="menu-note">${u
+      ? "Коллекция хранится в облаке. На этом устройстве есть её копия для работы без интернета."
+      : "Сейчас коллекция хранится только на этом устройстве, в этом браузере. Войдите, чтобы хранить её в облаке, или время от времени сохраняйте резервную копию."}</p>`;
   openSheet("menu");
   $("mClose").onclick = () => closeSheet("menu");
   $("mExport").onclick = () => { closeSheet("menu"); exportExcel(); };
   $("mImport").onclick = () => { closeSheet("menu"); $("importXlsx").click(); };
   $("mBackup").onclick = () => { closeSheet("menu"); exportBackup(); };
   $("mRestore").onclick = () => { closeSheet("menu"); $("importBackup").click(); };
+  if ($("mLogin")) $("mLogin").onclick = () => { closeSheet("menu"); openAuth("signin"); };
+  if ($("mSync")) $("mSync").onclick = () => { closeSheet("menu"); scheduleSync(); };
+  if ($("mMigrate")) $("mMigrate").onclick = () => { closeSheet("menu"); offerMigration(true); };
+  if ($("mLogout")) $("mLogout").onclick = () => { closeSheet("menu"); confirmSignOut(); };
   const mi = $("mInstall");
   if (mi) mi.onclick = async () => { installEvt.prompt(); await installEvt.userChoice.catch(() => {}); installEvt = null; closeSheet("menu"); };
 }
@@ -522,18 +579,296 @@ $("menuBtn").onclick = openMenu;
 // with filters on, the button exports exactly what is shown, in the shown order; otherwise the whole collection
 $("exportBtn").onclick = () => exportExcel(lastFiltering ? lastShown : undefined);
 
+/* ---------- cloud sync ---------- */
+const FIELD_KEYS = ["num", "name", "country", "notes", "flavor", "event", "volume", "height", "date"];
+function toRow(r, me) {
+  const now = new Date().toISOString();
+  const o = { id: r.id, user_id: me, photo_path: r.photo_path || null, thumb_path: r.thumb_path || null, created_at: r.createdAt || now, updated_at: r.updatedAt || now };
+  FIELD_KEYS.forEach((k) => (o[k] = k === "num" ? (Number.isFinite(+r.num) ? +r.num : null) : String(r[k] ?? "")));
+  return o;
+}
+function fromRow(row) {
+  const o = { id: row.id, photo_path: row.photo_path || "", thumb_path: row.thumb_path || "", createdAt: row.created_at, updatedAt: row.updated_at };
+  FIELD_KEYS.forEach((k) => (o[k] = row[k] ?? ""));
+  return o;
+}
+const sameRec = (a, b) => ["updatedAt", "photo_path", "thumb_path", ...FIELD_KEYS].every((k) => String(a[k] ?? "") === String(b[k] ?? ""));
+
+let sync = { state: "idle", msg: "" };
+let syncRun = null, syncQueued = false;
+function setSync(state, msg = "") { sync = { state, msg }; renderStatus(); }
+function scheduleSync() {
+  if (!isCloud()) return Promise.resolve();
+  if (syncRun) { syncQueued = true; return syncRun; }
+  syncRun = doSync().finally(() => {
+    syncRun = null;
+    if (syncQueued) { syncQueued = false; scheduleSync(); }
+  });
+  return syncRun;
+}
+
+async function doSync() {
+  const me = owner();
+  setSync("busy");
+  try {
+    // 1. deletions made on this device
+    const gone = records.filter((r) => r.owner === me && r._deleted);
+    if (gone.length) {
+      await Cloud.remove(gone.map((r) => r.id));
+      const paths = gone.flatMap((r) => [r.photo_path, r.thumb_path]).filter(Boolean);
+      if (paths.length) await Cloud.removeFiles(paths).catch(() => {});
+      for (const r of gone) await dbDelete(r.id);
+      const ids = new Set(gone.map((r) => r.id));
+      records = records.filter((r) => !(ids.has(r.id) && r._deleted));
+    }
+
+    // 2. new and changed cans: photos first, then the rows
+    const dirty = records.filter((r) => r.owner === me && r._dirty && !r._deleted);
+    const revs = new Map(dirty.map((r) => [r.id, r._rev]));
+    for (const r of dirty) {
+      if (!r._photoDirty) continue;
+      if (r.photo) { const p = `${me}/${r.id}.jpg`; await Cloud.upload(p, r.photo); r.photo_path = p; }
+      if (r.thumb) { const p = `${me}/${r.id}_t.jpg`; await Cloud.upload(p, r.thumb); r.thumb_path = p; }
+    }
+    for (let i = 0; i < dirty.length; i += 100) await Cloud.upsert(dirty.slice(i, i + 100).map((r) => toRow(r, me)));
+    const done = [];
+    for (const r of dirty) {
+      const cur = records.find((x) => x.id === r.id);
+      if (!cur) continue;
+      if (cur === r && r._rev === revs.get(r.id)) { delete r._dirty; delete r._photoDirty; done.push(r); }
+      else if (cur !== r && !cur._photoDirty) {
+        // edited again while sending: keep the uploaded photo links, send the new edit next round
+        cur.photo_path = cur.photo_path || r.photo_path; cur.thumb_path = cur.thumb_path || r.thumb_path; done.push(cur);
+      }
+    }
+    if (done.length) await dbPutMany(done);
+
+    // 3. the cloud copy is the source of truth for everything not waiting to be sent
+    const rows = await Cloud.list();
+    if (owner() !== me) return;
+    const mine = new Map(records.filter((r) => r.owner === me).map((r) => [r.id, r]));
+    const seen = new Set(), put = [];
+    for (const row of rows) {
+      seen.add(row.id);
+      const loc = mine.get(row.id);
+      if (loc && (loc._dirty || loc._deleted)) continue;
+      const rec = { ...(loc || {}), ...fromRow(row), owner: me };
+      if (loc && loc.photo_path !== rec.photo_path) delete rec.photo;
+      if (loc && loc.thumb_path !== rec.thumb_path) delete rec.thumb;
+      if (!loc || !sameRec(loc, rec)) put.push(rec);
+    }
+    const stale = [...mine.values()].filter((r) => !seen.has(r.id) && !r._dirty && !r._deleted);
+    if (put.length) { await dbPutMany(put); upsertRecords(put); }
+    if (stale.length) {
+      for (const r of stale) await dbDelete(r.id);
+      const ids = new Set(stale.map((r) => r.id));
+      records = records.filter((r) => !ids.has(r.id));
+    }
+    setSync("ok");
+    render();
+
+    // 4. small photos for the list
+    await fetchThumbs(me);
+  } catch (e) {
+    if (e.code === "offline") setSync("offline");
+    else if (!Cloud.user()) setSync("idle");
+    else setSync("error", e.message);
+  }
+}
+
+async function fetchThumbs(me) {
+  const need = records.filter((r) => r.owner === me && !r.thumb && r.thumb_path);
+  let i = 0, n = 0;
+  const worker = async () => {
+    while (i < need.length) {
+      const r = need[i++];
+      try {
+        r.thumb = await Cloud.download(r.thumb_path);
+        if (owner() !== me) return;
+        await dbPut(r);
+        if (++n % 8 === 0) render();
+      } catch (e) { if (e.code === "offline") return; }
+    }
+  };
+  await Promise.all([worker(), worker(), worker(), worker()]);
+  if (n) render();
+}
+async function loadFullPhoto(c) {
+  if (c.photo || !c.photo_path || !isCloud()) return null;
+  const b = await Cloud.download(c.photo_path);
+  c.photo = b;
+  await dbPut(c);
+  return b;
+}
+
+/* ---------- status line ---------- */
+function renderStatus() {
+  const el = $("status");
+  const u = Cloud.user();
+  const pending = u ? records.filter((r) => r.owner === u.id && (r._dirty || r._deleted)).length : 0;
+  let html = "";
+  if (!u) {
+    html = `<span class="dot"></span><span>Коллекция только на этом устройстве.</span><button class="linkbtn" id="stLogin" type="button">Войти и хранить в облаке</button>`;
+  } else {
+    const text = {
+      busy: "Синхронизация…",
+      ok: pending ? `Ждут отправки: ${pending}` : "Сохранено в облаке",
+      offline: `Нет интернета${pending ? ` · ждут отправки: ${pending}` : ""}. Изменения отправятся позже.`,
+      error: `Не удалось синхронизировать: ${sync.msg}`,
+      idle: pending ? `Ждут отправки: ${pending}` : "Облако",
+    }[sync.state] || "";
+    const cls = sync.state === "ok" && !pending ? "ok" : sync.state === "error" ? "err" : sync.state === "offline" ? "warn" : "";
+    html = `<span class="dot ${cls}"></span><span>${esc(text)}</span><span class="who">${esc(u.email)}</span>` +
+      (sync.state === "error" || sync.state === "offline" ? `<button class="linkbtn" id="stRetry" type="button">Повторить</button>` : "");
+  }
+  if (storageWarning) html += `<span class="warn-text">${esc(storageWarning)}</span>`;
+  el.innerHTML = html;
+  el.hidden = false;
+  if ($("stLogin")) $("stLogin").onclick = () => openAuth("signin");
+  if ($("stRetry")) $("stRetry").onclick = () => scheduleSync();
+}
+
+/* ---------- confirm dialog ---------- */
+function ask({ title, text, buttons }) {
+  $("askBody").innerHTML = `<div class="menu-title">${esc(title)}</div><p class="hint">${esc(text)}</p>
+    <div class="row end">${buttons.map((b, i) => `<button class="btn ${b.primary ? "primary" : ""}" data-i="${i}" type="button">${esc(b.label)}</button>`).join("")}</div>`;
+  $("askBody").querySelectorAll("button[data-i]").forEach((el) => (el.onclick = async () => {
+    closeSheet("ask");
+    const b = buttons[+el.dataset.i];
+    if (b.run) await b.run();
+  }));
+  openSheet("ask");
+}
+
+/* ---------- sign in ---------- */
+let authMode = "signin", authEmail = "";
+function openAuth(mode = "signin", msg = "", isError = false) { authMode = mode; drawAuth(msg, isError); openSheet("auth"); }
+function drawAuth(msg = "", isError = false) {
+  const m = authMode;
+  const title = { signin: "Вход", signup: "Новый аккаунт", reset: "Восстановление пароля", newpass: "Новый пароль" }[m];
+  const intro = {
+    signin: "Войдите, чтобы коллекция хранилась в облаке и была одинаковой на телефоне и компьютере.",
+    signup: "Аккаунт нужен, чтобы хранить коллекцию в облаке. Ваши банки видите только вы.",
+    reset: "Пришлём на почту ссылку для смены пароля.",
+    newpass: "Придумайте новый пароль для входа.",
+  }[m];
+  const submit = { signin: "Войти", signup: "Создать аккаунт", reset: "Отправить ссылку", newpass: "Сохранить пароль" }[m];
+  const needEmail = m !== "newpass", needPass = m !== "reset";
+  $("authBody").innerHTML = `
+    <div class="bar"><div class="menu-title">${title}</div><button class="ghost" id="aClose" type="button">Закрыть</button></div>
+    <p class="hint">${intro}</p>
+    <form id="aForm" class="form" novalidate>
+      ${needEmail ? `<label class="field"><span>Email</span><input class="answer" id="aEmail" type="email" autocomplete="email" inputmode="email" autocapitalize="off" spellcheck="false" value="${esc(authEmail)}"></label>` : ""}
+      ${needPass ? `<label class="field"><span>Пароль</span><input class="answer" id="aPass" type="password" autocomplete="${m === "signin" ? "current-password" : "new-password"}"></label>` : ""}
+      ${m === "signup" || m === "newpass" ? `<p class="field-hint">Не меньше 6 символов.</p>` : ""}
+      <p class="form-msg ${isError ? "err" : ""}" id="aMsg" ${msg ? "" : "hidden"}>${esc(msg)}</p>
+      <button class="btn primary wide" id="aSubmit" type="submit">${submit}</button>
+    </form>
+    <div class="auth-links">
+      ${m === "signin" ? `<button class="linkbtn" data-mode="signup" type="button">Создать аккаунт</button><button class="linkbtn" data-mode="reset" type="button">Забыли пароль?</button>` : ""}
+      ${m === "signup" || m === "reset" ? `<button class="linkbtn" data-mode="signin" type="button">У меня уже есть аккаунт</button>` : ""}
+    </div>`;
+  $("aClose").onclick = () => closeSheet("auth");
+  $("authBody").querySelectorAll("[data-mode]").forEach((b) => (b.onclick = () => {
+    if ($("aEmail")) authEmail = cap($("aEmail").value);
+    authMode = b.dataset.mode; drawAuth();
+  }));
+  const say = (t, err) => { const el = $("aMsg"); el.textContent = t; el.hidden = !t; el.classList.toggle("err", !!err); };
+  $("aForm").onsubmit = async (e) => {
+    e.preventDefault();
+    const email = needEmail ? cap($("aEmail").value) : "", pass = needPass ? $("aPass").value : "";
+    if (needEmail) authEmail = email;
+    if (needEmail && !/^\S+@\S+\.\S+$/.test(email)) return say("Проверьте, правильно ли написан email.", true);
+    if (needPass && pass.length < 6) return say("Пароль должен быть не короче 6 символов.", true);
+    const btn = $("aSubmit"); btn.disabled = true; btn.textContent = "Подождите…";
+    try {
+      if (m === "signin") { await Cloud.signIn(email, pass); closeSheet("auth"); toast("Вы вошли"); }
+      else if (m === "signup") {
+        const needConfirm = await Cloud.signUp(email, pass);
+        if (needConfirm) { authMode = "signin"; drawAuth(`Мы отправили письмо на ${email}. Откройте ссылку из письма, затем войдите здесь с этим паролем.`); }
+        else { closeSheet("auth"); toast("Аккаунт создан, вы вошли"); }
+      } else if (m === "reset") { await Cloud.sendReset(email); say("Если такой аккаунт есть, письмо со ссылкой уже отправлено. Проверьте почту, в том числе папку «Спам»."); btn.disabled = false; btn.textContent = submit; }
+      else if (m === "newpass") { await Cloud.setPassword(pass); closeSheet("auth"); toast("Пароль изменён"); }
+    } catch (err) {
+      say(Cloud.explain(err), true);
+      if ($("aSubmit")) { $("aSubmit").disabled = false; $("aSubmit").textContent = submit; }
+    }
+  };
+  if (!matchMedia("(pointer: coarse)").matches) setTimeout(() => ($("aEmail") || $("aPass"))?.focus(), 50);
+}
+
+/* ---------- cans added before signing in ---------- */
+function offerMigration(fromMenu = false) {
+  const locals = records.filter((r) => ownerOf(r) === "local" && !r._deleted);
+  if (!isCloud() || !locals.length) return;
+  const inCloud = cans.length;
+  ask({
+    title: "Перенести банки в облако?",
+    text: `На этом устройстве ${plural(locals.length, "банка", "банки", "банок")}, добавленных без входа. Перенести их в ваш аккаунт? ` +
+      (inCloud ? `В облаке уже ${plural(inCloud, "банка", "банки", "банок")}, перенесённые получат номера после них.` : "Номера сохранятся."),
+    buttons: [{ label: fromMenu ? "Отмена" : "Не сейчас" }, { label: "Перенести", primary: true, run: migrateLocal }],
+  });
+}
+async function migrateLocal() {
+  const locals = records.filter((r) => ownerOf(r) === "local" && !r._deleted).sort((a, b) => (a.num || 0) - (b.num || 0));
+  let max = cans.reduce((m, c) => Math.max(m, +c.num || 0), 0);
+  const renumber = cans.length > 0;
+  locals.forEach((r) => { if (renumber) r.num = ++max; if (r.photo || r.thumb) r._photoDirty = true; });
+  toast(`Переношу в облако: ${plural(locals.length, "банка", "банки", "банок")}`, 3500);
+  await saveCans(locals);
+}
+
+function confirmSignOut() {
+  const me = owner();
+  const pending = records.filter((r) => r.owner === me && (r._dirty || r._deleted)).length;
+  ask({
+    title: "Выйти из аккаунта?",
+    text: (pending ? `${plural(pending, "изменение ещё не отправлено", "изменения ещё не отправлены", "изменений ещё не отправлены")} в облако и пропадут. ` : "") +
+      "Коллекция останется в облаке, а её копия с этого устройства удалится. Чтобы снова её увидеть, войдите в аккаунт.",
+    buttons: [{ label: "Отмена" }, { label: "Выйти", primary: true, run: async () => {
+      const mine = records.filter((r) => r.owner === me);
+      await Cloud.signOut();
+      for (const r of mine) await dbDelete(r.id).catch(() => {});
+      records = records.filter((r) => r.owner !== me);
+      render();
+      toast("Вы вышли из аккаунта");
+    } }],
+  });
+}
+
+let currentUser = Cloud.user() ? Cloud.user().id : null;
+Cloud.onChange(async (s) => {
+  const now = s ? s.user.id : null;
+  if (now === currentUser) { renderStatus(); return; } // token refreshed
+  currentUser = now;
+  setSync("idle");
+  render();
+  if (now) { await scheduleSync(); offerMigration(); }
+});
+window.addEventListener("online", () => scheduleSync());
+let lastWake = 0;
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && Date.now() - lastWake > 30000) { lastWake = Date.now(); scheduleSync(); }
+});
+
 /* ---------- start ---------- */
 (async () => {
   try {
-    cans = await dbAll();
+    records = await dbAll();
     if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
   } catch (e) {
-    $("status").hidden = false;
-    $("status").textContent = "Браузер не даёт сохранять данные (возможно, включён приватный режим). Банки пропадут после закрытия страницы.";
-    cans = [];
+    storageWarning = "Браузер не даёт сохранять данные на устройстве (возможно, включён приватный режим).";
+    records = [];
     run.disabled = true;
   }
   render();
+  try {
+    const link = await Cloud.fromLink();
+    if (link && link.error) openAuth("signin", Cloud.explain({ code: link.error, message: link.message }), true);
+    else if (link && link.type === "recovery") openAuth("newpass");
+    else if (link) toast("Email подтверждён, вы вошли");
+  } catch (e) { openAuth("signin", Cloud.explain(e), true); }
+  if (isCloud()) { lastWake = Date.now(); scheduleSync(); }
 })();
 
 if ("serviceWorker" in navigator && location.protocol !== "file:") {

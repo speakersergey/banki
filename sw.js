@@ -1,7 +1,7 @@
 /* Offline support: the app shell, fonts and the Excel module are cached after the first visit. */
-const VERSION = "cans-v3";
+const VERSION = "cans-v4";
 const SHELL = [
-  "./", "./index.html", "./style.css", "./app.js", "./manifest.webmanifest",
+  "./", "./index.html", "./style.css", "./cloud.js", "./app.js", "./manifest.webmanifest",
   "./icon-192.png", "./icon-512.png", "./apple-touch-icon.png",
 ];
 
@@ -21,6 +21,8 @@ self.addEventListener("activate", (e) => {
 self.addEventListener("fetch", (e) => {
   const req = e.request;
   if (req.method !== "GET" || !req.url.startsWith("http")) return;
+  // the cloud (sign-in, data, photos) always goes to the network
+  if (new URL(req.url).hostname.endsWith(".supabase.co")) return;
   e.respondWith(
     caches.open(VERSION).then(async (cache) => {
       const cached = await cache.match(req, { ignoreSearch: req.mode === "navigate" });

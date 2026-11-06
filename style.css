@@ -58,7 +58,22 @@ h1 { font: 700 26px/1.1 var(--display); margin: 0; letter-spacing: -0.01em; text
   font-size: 14px;
 }
 .filters select.on { border-color: var(--accent); color: var(--accent); background-color: var(--accent-soft) }
-.status { font-size: 13px; color: var(--muted); margin: -4px 0 12px }
+.status { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: 13px; color: var(--muted); margin: -4px 0 14px }
+.status .who { opacity: .75; overflow-wrap: anywhere }
+.status .warn-text { flex-basis: 100%; color: var(--danger) }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--line); flex: none }
+.dot.ok { background: #2f9e5b }
+.dot.warn { background: #d08a00 }
+.dot.err { background: var(--danger) }
+.linkbtn { border: 0; background: none; padding: 4px 0; color: var(--accent); font-weight: 600; font-size: inherit; cursor: pointer; text-align: left }
+.form { display: flex; flex-direction: column; gap: 12px }
+.field { display: flex; flex-direction: column; gap: 6px }
+.field > span { font-size: 13px; color: var(--muted) }
+.field-hint { margin: -6px 0 0; font-size: 13px; color: var(--muted) }
+.form-msg { margin: 0; padding: 10px 12px; border-radius: 10px; background: var(--sunk); font-size: 14px }
+.form-msg.err { background: var(--accent-soft); color: var(--danger) }
+.btn.wide { width: 100% }
+.auth-links { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-top: 14px }
 
 .list { display: grid; grid-template-columns: 1fr; gap: 8px; margin: 0; padding: 0; list-style: none }
 @media (min-width: 720px) { .list { grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px } }
