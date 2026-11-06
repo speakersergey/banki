@@ -1,12 +1,13 @@
 /* Offline support: the app shell, fonts and the Excel module are cached after the first visit. */
-const VERSION = "cans-v5";
+const VERSION = "cans-v6";
 const SHELL = [
   "./", "./index.html", "./style.css", "./facts.js", "./cloud.js", "./app.js", "./manifest.webmanifest",
   "./icon-192.png", "./icon-512.png", "./apple-touch-icon.png",
 ];
 
 self.addEventListener("install", (e) => {
-  e.waitUntil(caches.open(VERSION).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  // "reload" skips the browser's HTTP cache, so a new version never mixes with old files
+  e.waitUntil(caches.open(VERSION).then((c) => c.addAll(SHELL.map((u) => new Request(u, { cache: "reload" })))).then(() => self.skipWaiting()));
 });
 
 self.addEventListener("activate", (e) => {
@@ -26,7 +27,8 @@ self.addEventListener("fetch", (e) => {
   e.respondWith(
     caches.open(VERSION).then(async (cache) => {
       const cached = await cache.match(req, { ignoreSearch: req.mode === "navigate" });
-      const network = fetch(req)
+      const sameOrigin = new URL(req.url).origin === self.location.origin;
+      const network = fetch(sameOrigin ? new Request(req, { cache: "no-cache" }) : req)
         .then((res) => { if (res && (res.ok || res.type === "opaque")) cache.put(req, res.clone()); return res; })
         .catch(() => cached || (req.mode === "navigate" ? cache.match("./index.html") : Response.error()));
       if (cached) { e.waitUntil(network.catch(() => {})); return cached; }
