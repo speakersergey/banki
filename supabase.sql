@@ -22,6 +22,10 @@ create index if not exists cans_user_idx on public.cans (user_id);
 
 alter table public.cans enable row level security;
 
+-- доступ к таблице через Data API только для вошедших пользователей (строки ограничены правилами ниже)
+revoke all on public.cans from anon;
+grant select, insert, update, delete on public.cans to authenticated;
+
 drop policy if exists "cans: read own"   on public.cans;
 drop policy if exists "cans: add own"    on public.cans;
 drop policy if exists "cans: change own" on public.cans;
