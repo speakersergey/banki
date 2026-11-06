@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Коллекция банок</title>
+<meta name="description" content="Учёт коллекции банок газировки: фото, страна, вкус и всё остальное.">
+<meta name="theme-color" content="#eef0f2" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#15171a" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Банки">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png" type="image/png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@600;700&family=Golos+Text:wght@400;500;600&family=JetBrains+Mono:wght@500&display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap" id="main">
+  <header class="top">
+    <div>
+      <h1>Коллекция банок</h1>
+      <div class="count" id="count">загрузка…</div>
+    </div>
+    <div class="top-actions">
+      <button class="btn add-desktop" id="addBtnTop" type="button">+ Добавить банку</button>
+      <button class="btn export-btn" id="exportBtn" type="button" title="Выгрузить список в Excel">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>
+        <span>Excel</span>
+      </button>
+      <button class="icon-btn" id="menuBtn" type="button" aria-label="Меню" aria-haspopup="true">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <input class="search" id="search" type="search" placeholder="Поиск по стране, вкусу, событию" autocomplete="off">
+  <div class="filters" id="filters">
+    <select id="fCountry" aria-label="Страна"><option value="">Все страны</option></select>
+    <select id="fFlavor" aria-label="Вкус"><option value="">Все вкусы</option></select>
+    <select id="fEvent" aria-label="Событие"><option value="">Любое событие</option><option value="yes">С событием</option><option value="no">Без события</option></select>
+    <select id="fHeight" aria-label="Высота"><option value="">Любая высота</option><option value="выс">Высокие</option><option value="низ">Низкие</option></select>
+    <select id="fSort" aria-label="Сортировка"><option value="num-desc">Сначала новые</option><option value="num-asc">Сначала старые</option><option value="country">По стране</option><option value="date-desc">По дате на банке</option></select>
+    <button class="ghost accent" id="fReset" type="button" hidden>Сбросить</button>
+  </div>
+  <p class="status" id="status" hidden></p>
+
+  <ul class="list" id="list"></ul>
+
+  <div class="empty" id="empty" hidden>
+    <svg width="44" height="58" viewBox="0 0 26 34" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="3" y="3" width="20" height="28" rx="4"/><path d="M3 8h20M3 26h20"/></svg>
+    <p><b>Коллекция пока пустая.</b><br>Сфотографируйте первую банку или загрузите таблицу Excel, если вы уже вели учёт.</p>
+    <div class="row">
+      <button class="btn primary" id="emptyAdd" type="button">Добавить банку</button>
+      <button class="btn" id="emptyImport" type="button">Загрузить из Excel</button>
+    </div>
+  </div>
+</div>
+
+<button class="fab" id="addBtn" type="button">
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>
+  Добавить банку
+</button>
+
+<section class="sheet" id="wizard" hidden role="dialog" aria-modal="true" aria-label="Новая банка"><div class="panel" id="wizardBody"></div></section>
+<section class="sheet" id="detail" hidden role="dialog" aria-modal="true" aria-label="Банка"><div class="panel" id="detailBody"></div></section>
+<section class="sheet" id="menu" hidden role="dialog" aria-modal="true" aria-label="Меню"><div class="panel small" id="menuBody"></div></section>
+
+<input type="file" id="importXlsx" accept=".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
+<input type="file" id="importBackup" accept=".json,application/json" hidden>
+<div class="toast" id="toast" role="status" hidden></div>
+
+<script src="app.js"></script>
+</body>
+</html>
